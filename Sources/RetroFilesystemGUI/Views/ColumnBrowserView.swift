@@ -4,10 +4,12 @@ import SwiftUI
 /// Selecting a folder expands its contents in the next column; selecting a file
 /// shows a preview panel in the rightmost position.
 ///
-/// Requirements: 2.3, 2.8
+/// Requirements: 2.3, 2.8, 4.2, 4.3, 4.4
 struct ColumnBrowserView: View {
     var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
+    var onAliasEdit: ((FileItem) -> Void)?
+    var onEditSortingRules: ((FileItem) -> Void)?
 
     /// Each element is the list of FileItems for one directory level.
     /// The first column always reflects `fileManagerVM.fileItems`.
@@ -74,7 +76,8 @@ struct ColumnBrowserView: View {
                 .foregroundStyle(item.isDirectory ? .blue : .secondary)
                 .frame(width: 16)
 
-            Text(item.name)
+            Text(fileManagerVM.displayName(for: item))
+                .italic(fileManagerVM.isAliased(item))
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -87,6 +90,13 @@ struct ColumnBrowserView: View {
             }
         }
         .contentShape(Rectangle())
+        .overlay {
+            if item.isDirectory, let count = fileManagerVM.unsortedCounts[item.url.path], count > 0 {
+                SortStatusBadge(count: count) {
+                    fileManagerVM.toggleUnsortedFilter(for: item.url)
+                }
+            }
+        }
         .draggable(item.url)
         .onTapGesture(count: 2) {
             handleDoubleClick(item: item)
@@ -94,7 +104,7 @@ struct ColumnBrowserView: View {
         .onTapGesture(count: 1) {
             handleSelection(item.id, inColumn: columnIndex)
         }
-        .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+        .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: onAliasEdit, onEditSortingRules: onEditSortingRules)
     }
 
     // MARK: - File Preview Panel

@@ -4,10 +4,12 @@ import SwiftUI
 /// name, date modified, size, and kind. Supports multi-selection and
 /// displays tag color indicators on tagged items.
 ///
-/// Requirements: 2.2, 2.6, 2.7, 6.2, 6.8
+/// Requirements: 2.2, 2.6, 2.7, 6.2, 6.8, 4.2, 4.3, 4.4
 struct ListTableView: View {
     @Bindable var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
+    var onAliasEdit: ((FileItem) -> Void)?
+    var onEditSortingRules: ((FileItem) -> Void)?
 
     @State private var sortOrder: [KeyPathComparator<FileItem>] = [
         KeyPathComparator(\.name, order: .forward)
@@ -17,7 +19,7 @@ struct ListTableView: View {
         Table(fileManagerVM.fileItems, selection: $fileManagerVM.selectedItems, sortOrder: $sortOrder) {
             TableColumn("Name", sortUsing: KeyPathComparator(\.name)) { item in
                 nameCell(for: item)
-                    .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+                    .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: onAliasEdit, onEditSortingRules: onEditSortingRules)
             }
             .width(min: 200)
 
@@ -72,7 +74,8 @@ struct ListTableView: View {
                     .foregroundStyle(item.isDirectory ? .blue : .secondary)
                     .frame(width: 16)
 
-                Text(item.name)
+                Text(fileManagerVM.displayName(for: item))
+                    .italic(fileManagerVM.isAliased(item))
                     .lineLimit(1)
 
                 tagIndicators(for: item)
@@ -83,6 +86,13 @@ struct ListTableView: View {
                 Text("Video metadata: duration, resolution")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+        }
+        .overlay {
+            if item.isDirectory, let count = fileManagerVM.unsortedCounts[item.url.path], count > 0 {
+                SortStatusBadge(count: count) {
+                    fileManagerVM.toggleUnsortedFilter(for: item.url)
+                }
             }
         }
         .draggable(item.url)

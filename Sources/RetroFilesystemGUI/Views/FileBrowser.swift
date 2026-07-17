@@ -5,13 +5,19 @@ import UniformTypeIdentifiers
 /// based on the current view mode, and shows empty state placeholders when appropriate.
 /// Also provides keyboard shortcuts and drag-and-drop at the browser level.
 ///
-/// Requirements: 2.1, 2.2, 2.3, 1.12, 4.8, 6.6, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.8
+/// Requirements: 2.1, 2.2, 2.3, 1.12, 4.8, 6.6, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.8, 4.2, 4.3, 4.4
 struct FileBrowser: View {
     @Bindable var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
 
     /// Whether the current empty state is due to a tag filter (vs. an empty directory).
     var isTagFilterActive: Bool = false
+
+    /// Item currently being edited for alias in the sheet, if any.
+    @State private var aliasEditItem: FileItem?
+
+    /// The directory item whose sorting rules are being edited via sheet.
+    @State private var sortingRulesItem: FileItem?
 
     var body: some View {
         Group {
@@ -93,6 +99,19 @@ struct FileBrowser: View {
         } message: { collision in
             Text("An item named \"\(collision.fileName)\" already exists in the destination. What would you like to do?")
         }
+        // Alias edit sheet
+        .sheet(item: $aliasEditItem) { item in
+            AliasEditSheet(viewModel: fileManagerVM, item: item)
+        }
+        // Sorting rules editor sheet
+        .sheet(item: $sortingRulesItem) { item in
+            SortingRulesEditor(
+                viewModel: SortingRulesViewModel(
+                    directoryPath: item.url.path,
+                    storageService: SortingRulesStorageService()
+                )
+            )
+        }
     }
 
     // MARK: - View Mode Switching
@@ -101,11 +120,23 @@ struct FileBrowser: View {
     private var viewForCurrentMode: some View {
         switch fileManagerVM.viewMode {
         case .iconGrid:
-            IconGridView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+            IconGridView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: { item in
+                aliasEditItem = item
+            }, onEditSortingRules: { item in
+                sortingRulesItem = item
+            })
         case .list:
-            ListTableView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+            ListTableView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: { item in
+                aliasEditItem = item
+            }, onEditSortingRules: { item in
+                sortingRulesItem = item
+            })
         case .column:
-            ColumnBrowserView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+            ColumnBrowserView(fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: { item in
+                aliasEditItem = item
+            }, onEditSortingRules: { item in
+                sortingRulesItem = item
+            })
         }
     }
 

@@ -100,10 +100,43 @@ class FileManagerViewModel {
     /// Watcher that monitors the current directory for changes.
     let fileSystemWatcher = FileSystemWatcher()
 
+    // MARK: - Alias State
+
+    /// The loaded alias store mapping file paths to display names.
+    var aliasStore: AliasStore = AliasStore(aliases: [:])
+
+    // MARK: - Metadata Panel State
+
+    /// Whether the metadata panel is currently visible.
+    var metadataPanelVisible: Bool = false
+
+    /// The pretty-printed JSON text for the metadata editor.
+    var selectedItemMetadata: String = "{}"
+
+    /// Inline error message for metadata validation failures.
+    var metadataValidationError: String? = nil
+
+    /// The previous metadata state for single-level undo support.
+    var previousMetadataState: String? = nil
+
+    // MARK: - Unsorted File Tracking State
+
+    /// Dictionary mapping directory paths to their unsorted file counts.
+    var unsortedCounts: [String: Int] = [:]
+
+    /// Whether the unsorted filter is currently active for the current directory.
+    var unsortedFilterActive: Bool = false
+
+    /// Cached unsorted items for the current directory when filter is active.
+    private var unsortedItems: [FileItem] = []
+
     // MARK: - Services
 
     private let fileSystemService: FileSystemServiceProtocol
     private let tagStorageService: TagStorageServiceProtocol
+    private let aliasStorageService: AliasStorageServiceProtocol?
+    private let metadataStorageService: MetadataStorageServiceProtocol?
+    private let sortingRulesService: SortingRulesStorageServiceProtocol?
 
     // MARK: - UserDefaults Keys
 
@@ -121,14 +154,23 @@ class FileManagerViewModel {
     /// - Parameters:
     ///   - fileSystemService: Service for file system operations.
     ///   - tagStorageService: Service for tag persistence.
+    ///   - aliasStorageService: Service for alias persistence (optional).
+    ///   - metadataStorageService: Service for metadata persistence (optional).
+    ///   - sortingRulesService: Service for sorting rules persistence (optional).
     ///   - defaults: UserDefaults instance for persisting preferences.
     init(
         fileSystemService: FileSystemServiceProtocol,
         tagStorageService: TagStorageServiceProtocol,
+        aliasStorageService: AliasStorageServiceProtocol? = nil,
+        metadataStorageService: MetadataStorageServiceProtocol? = nil,
+        sortingRulesService: SortingRulesStorageServiceProtocol? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.fileSystemService = fileSystemService
         self.tagStorageService = tagStorageService
+        self.aliasStorageService = aliasStorageService
+        self.metadataStorageService = metadataStorageService
+        self.sortingRulesService = sortingRulesService
         self.defaults = defaults
 
         // Load persisted view mode or default to list
@@ -152,6 +194,11 @@ class FileManagerViewModel {
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         self.currentDirectory = homeDirectory
         self.navigationState = NavigationState(currentDirectory: homeDirectory)
+
+        // Load alias store if service is available
+        if let aliasService = aliasStorageService {
+            self.aliasStore = (try? aliasService.load()) ?? AliasStore(aliases: [:])
+        }
 
         // Load initial directory contents
         loadContents()
@@ -436,6 +483,250 @@ class FileManagerViewModel {
         return candidate
     }
 
+    // MARK: - Alias Operations
+
+    /// Assigns an alias display name to a file item.
+    /// - Parameters:
+    ///   - item: The file item to alias.
+    ///   - name: The alias name to assign.
+    /// - Returns: A `Result` indicating success or an `AliasValidationError`.
+    @discardableResult
+    func setAlias(for item: FileItem, name: String) -> Result<Void, AliasValidationError> {
+        if let error = AliasStore.validateAlias(name) {
+            return .failure(error)
+        }
+
+        aliasStore.aliases[item.url.path] = name
+
+        if let service = aliasStorageService {
+            try? service.save(aliasStore)
+        }
+
+        return .success(())
+    }
+
+    /// Removes the alias for a file item, reverting to the filesystem name.
+    /// - Parameter item: The file item whose alias should be removed.
+    func removeAlias(for item: FileItem) {
+        aliasStore.aliases.removeValue(forKey: item.url.path)
+
+        if let service = aliasStorageService {
+            try? service.save(aliasStore)
+        }
+    }
+
+    /// Returns the display name for a file item: alias if present, otherwise the filesystem name.
+    /// - Parameter item: The file item to get the display name for.
+    /// - Returns: The alias name if one exists, otherwise the item's filesystem name.
+    func displayName(for item: FileItem) -> String {
+        aliasStore.aliases[item.url.path] ?? item.name
+    }
+
+    /// Returns whether a file item has an alias assigned, for italic styling decisions.
+    /// - Parameter item: The file item to check.
+    /// - Returns: `true` if the item has an alias, `false` otherwise.
+    func isAliased(_ item: FileItem) -> Bool {
+        aliasStore.aliases[item.url.path] != nil
+    }
+
+    // MARK: - Metadata Operations
+
+    /// Loads metadata for the given file path and populates the editor state.
+    /// - Parameter path: The absolute path of the file to load metadata for.
+    func loadMetadata(for path: String) {
+        guard let service = metadataStorageService else {
+            selectedItemMetadata = "{}"
+            previousMetadataState = nil
+            return
+        }
+
+        let store: MetadataStore
+        do {
+            store = try service.load()
+        } catch {
+            selectedItemMetadata = "{}"
+            previousMetadataState = nil
+            return
+        }
+
+        let jsonValue = store.entries[path] ?? .object([:])
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        do {
+            let data = try encoder.encode(jsonValue)
+            selectedItemMetadata = String(data: data, encoding: .utf8) ?? "{}"
+        } catch {
+            selectedItemMetadata = "{}"
+        }
+
+        // New selection clears undo state
+        previousMetadataState = nil
+    }
+
+    /// Saves metadata JSON text for the given file path after validation.
+    /// - Parameters:
+    ///   - jsonText: The JSON text to validate and save.
+    ///   - path: The absolute path of the file to save metadata for.
+    /// - Returns: A `Result` indicating success or a `MetadataValidationError`.
+    @discardableResult
+    func saveMetadata(jsonText: String, for path: String) -> Result<Void, MetadataValidationError> {
+        // Validate the JSON text
+        if let validationError = MetadataStore.validateMetadataJSON(jsonText) {
+            switch validationError {
+            case .malformedJSON(let line, let character):
+                metadataValidationError = "Invalid JSON at line \(line), character \(character)"
+            case .tooLarge:
+                metadataValidationError = "Metadata must be smaller than 1 MB"
+            }
+            return .failure(validationError)
+        }
+
+        guard let service = metadataStorageService else {
+            return .failure(.malformedJSON(line: 1, character: 1))
+        }
+
+        // Save previous state for undo (current state before save)
+        previousMetadataState = selectedItemMetadata
+
+        // Parse jsonText into JSONValue via JSONSerialization then JSONDecoder
+        let jsonData = Data(jsonText.utf8)
+        let parsedValue: JSONValue
+        do {
+            let anyObject = try JSONSerialization.jsonObject(with: jsonData, options: .fragmentsAllowed)
+            let reEncodedData = try JSONSerialization.data(withJSONObject: anyObject, options: .fragmentsAllowed)
+            let decoder = JSONDecoder()
+            parsedValue = try decoder.decode(JSONValue.self, from: reEncodedData)
+        } catch {
+            metadataValidationError = "Failed to parse JSON"
+            return .failure(.malformedJSON(line: 1, character: 1))
+        }
+
+        // Update the store
+        do {
+            var store = try service.load()
+            store.entries[path] = parsedValue
+            try service.save(store)
+        } catch {
+            metadataValidationError = "Failed to save metadata"
+            return .failure(.malformedJSON(line: 1, character: 1))
+        }
+
+        // Re-format the saved value for display
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let formattedData = try? encoder.encode(parsedValue),
+           let formattedString = String(data: formattedData, encoding: .utf8) {
+            selectedItemMetadata = formattedString
+        } else {
+            selectedItemMetadata = jsonText
+        }
+
+        // Clear validation error on success
+        metadataValidationError = nil
+
+        return .success(())
+    }
+
+    /// Restores the previous metadata state (single-level undo).
+    /// - Parameter path: The absolute path of the file to undo metadata for.
+    func undoMetadata(for path: String) {
+        guard let previous = previousMetadataState else { return }
+
+        // Restore the previous state to the editor
+        selectedItemMetadata = previous
+
+        // Save the previous state to the store (without updating previousMetadataState)
+        guard let service = metadataStorageService else { return }
+
+        let jsonData = Data(previous.utf8)
+        do {
+            let anyObject = try JSONSerialization.jsonObject(with: jsonData, options: .fragmentsAllowed)
+            let reEncodedData = try JSONSerialization.data(withJSONObject: anyObject, options: .fragmentsAllowed)
+            let decoder = JSONDecoder()
+            let parsedValue = try decoder.decode(JSONValue.self, from: reEncodedData)
+
+            var store = try service.load()
+            store.entries[path] = parsedValue
+            try service.save(store)
+        } catch {
+            // If undo persistence fails, we still restore the UI state
+        }
+
+        // Only single-level undo
+        previousMetadataState = nil
+    }
+
+    // MARK: - Unsorted File Operations
+
+    /// Evaluates which files in the given directory are unsorted based on sorting rules.
+    /// Updates the `unsortedCounts` dictionary and caches unsorted items if the directory
+    /// is the current directory.
+    /// - Parameter directory: The directory URL to evaluate.
+    func evaluateUnsortedFiles(in directory: URL) {
+        guard let service = sortingRulesService else { return }
+
+        let store: SortingRulesStore
+        do {
+            store = try service.load()
+        } catch {
+            return
+        }
+
+        // Find rules for this directory
+        let directoryPath = directory.path
+        guard let directoryRules = store.directories.first(where: { $0.directoryPath == directoryPath }) else {
+            // No rules for this directory — remove count entry and return
+            unsortedCounts.removeValue(forKey: directoryPath)
+            if directory == currentDirectory {
+                unsortedItems = []
+            }
+            return
+        }
+
+        // Get the file items for the directory
+        let items: [FileItem]
+        if directory == currentDirectory {
+            items = allFileItems
+        } else {
+            // Load items for a different directory
+            items = (try? fileSystemService.contentsOfDirectory(at: directory, showHidden: false)) ?? []
+        }
+
+        // Evaluate unsorted files
+        let result = UnsortedFileEvaluator.unsortedFiles(
+            from: items,
+            rules: directoryRules.rules,
+            tagStorageService: tagStorageService
+        )
+
+        unsortedCounts[directoryPath] = result.count
+
+        // Cache unsorted items if this is the current directory
+        if directory == currentDirectory {
+            unsortedItems = result
+        }
+    }
+
+    /// Toggles the unsorted filter for the given directory.
+    /// When active, only unsorted files are shown. When inactive, normal filtering is restored.
+    /// - Parameter directory: The directory URL to toggle filtering for.
+    func toggleUnsortedFilter(for directory: URL) {
+        guard directory == currentDirectory else { return }
+
+        unsortedFilterActive.toggle()
+
+        if unsortedFilterActive {
+            // Filter fileItems to show only unsorted items
+            let unsortedIds = Set(unsortedItems.map { $0.id })
+            fileItems = fileItems.filter { unsortedIds.contains($0.id) }
+        } else {
+            // Re-apply normal filtering (tag filter resets the view)
+            applyTagFilter()
+        }
+    }
+
     // MARK: - Private Helpers
 
     /// Loads and sorts the contents of the current directory.
@@ -444,6 +735,7 @@ class FileManagerViewModel {
             let items = try fileSystemService.contentsOfDirectory(at: currentDirectory, showHidden: false)
             allFileItems = sortFileItems(items, by: sortColumn, ascending: sortAscending)
             applyTagFilter()
+            evaluateUnsortedFiles(in: currentDirectory)
             errorMessage = nil
         } catch {
             allFileItems = []
@@ -454,13 +746,59 @@ class FileManagerViewModel {
 
     /// Refreshes the current directory contents. Called by the file system watcher.
     func refreshContents() {
+        // Clean up stale alias entries (paths that no longer exist on disk)
+        cleanupStaleAliases()
+
+        // Clean up stale metadata entries (paths that no longer exist on disk)
+        cleanupStaleMetadata()
+
         loadContents()
     }
 
+    /// Removes alias entries whose paths no longer exist on disk.
+    private func cleanupStaleAliases() {
+        var didRemove = false
+        for path in aliasStore.aliases.keys {
+            if !FileManager.default.fileExists(atPath: path) {
+                aliasStore.aliases.removeValue(forKey: path)
+                didRemove = true
+            }
+        }
+
+        if didRemove, let service = aliasStorageService {
+            try? service.save(aliasStore)
+        }
+    }
+
+    /// Removes metadata entries whose paths no longer exist on disk.
+    private func cleanupStaleMetadata() {
+        guard let service = metadataStorageService else { return }
+
+        guard var store = try? service.load() else { return }
+
+        var didRemove = false
+        for path in store.entries.keys {
+            if !FileManager.default.fileExists(atPath: path) {
+                store.entries.removeValue(forKey: path)
+                didRemove = true
+            }
+        }
+
+        if didRemove {
+            try? service.save(store)
+        }
+    }
+
     /// Applies tag filtering to allFileItems and updates fileItems.
+    /// Also respects the unsorted filter if active.
     private func applyTagFilter() {
         guard !selectedTagIds.isEmpty else {
             fileItems = allFileItems
+            // Apply unsorted filter if active
+            if unsortedFilterActive {
+                let unsortedIds = Set(unsortedItems.map { $0.id })
+                fileItems = fileItems.filter { unsortedIds.contains($0.id) }
+            }
             return
         }
 
@@ -470,11 +808,21 @@ class FileManagerViewModel {
             store = try tagStorageService.load()
         } catch {
             fileItems = allFileItems
+            if unsortedFilterActive {
+                let unsortedIds = Set(unsortedItems.map { $0.id })
+                fileItems = fileItems.filter { unsortedIds.contains($0.id) }
+            }
             return
         }
 
         let matchingPaths = Set(filterFilesByTags(store: store, selectedTagIds: selectedTagIds))
         fileItems = allFileItems.filter { matchingPaths.contains($0.url.path) }
+
+        // Apply unsorted filter if active
+        if unsortedFilterActive {
+            let unsortedIds = Set(unsortedItems.map { $0.id })
+            fileItems = fileItems.filter { unsortedIds.contains($0.id) }
+        }
     }
 
     /// Sets up the file system watcher to monitor the current directory.

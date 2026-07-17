@@ -3,16 +3,53 @@ import SwiftUI
 /// A reusable view modifier that attaches a tag assignment context menu to file items.
 /// The context menu shows a "Tags" submenu listing all available tags, with checkmarks
 /// indicating which tags are already assigned to the selected file(s).
+/// Also provides an alias editing menu item when an `onAliasEdit` callback is provided,
+/// and a sorting rules menu item for directories when `onEditSortingRules` is provided.
 ///
-/// Requirements: 6.1, 6.3, 6.7
+/// Requirements: 6.1, 6.3, 6.7, 4.2, 4.3, 4.4, 1.1, 3.5
 struct TagContextMenuModifier: ViewModifier {
     var item: FileItem
     var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
+    var onAliasEdit: ((FileItem) -> Void)?
+    var onEditSortingRules: ((FileItem) -> Void)?
 
     func body(content: Content) -> some View {
         content.contextMenu {
             tagSubmenu
+
+            if let onAliasEdit {
+                Divider()
+                aliasMenuItem(onAliasEdit: onAliasEdit)
+            }
+
+            if item.isDirectory, let onEditSortingRules {
+                Divider()
+                sortingRulesMenuItem(onEditSortingRules: onEditSortingRules)
+            }
+        }
+    }
+
+    // MARK: - Alias Menu Item
+
+    @ViewBuilder
+    private func aliasMenuItem(onAliasEdit: @escaping (FileItem) -> Void) -> some View {
+        let isAliased = fileManagerVM.isAliased(item)
+        Button {
+            onAliasEdit(item)
+        } label: {
+            Label(isAliased ? "Edit Alias…" : "Set Alias…", systemImage: "pencil")
+        }
+    }
+
+    // MARK: - Sorting Rules Menu Item
+
+    @ViewBuilder
+    private func sortingRulesMenuItem(onEditSortingRules: @escaping (FileItem) -> Void) -> some View {
+        Button {
+            onEditSortingRules(item)
+        } label: {
+            Label("Sorting Rules…", systemImage: "arrow.up.arrow.down.circle")
         }
     }
 
@@ -99,12 +136,16 @@ extension View {
     func tagContextMenu(
         item: FileItem,
         fileManagerVM: FileManagerViewModel,
-        tagManagerVM: TagManagerViewModel
+        tagManagerVM: TagManagerViewModel,
+        onAliasEdit: ((FileItem) -> Void)? = nil,
+        onEditSortingRules: ((FileItem) -> Void)? = nil
     ) -> some View {
         modifier(TagContextMenuModifier(
             item: item,
             fileManagerVM: fileManagerVM,
-            tagManagerVM: tagManagerVM
+            tagManagerVM: tagManagerVM,
+            onAliasEdit: onAliasEdit,
+            onEditSortingRules: onEditSortingRules
         ))
     }
 }

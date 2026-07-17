@@ -2,10 +2,12 @@ import SwiftUI
 
 /// Icon grid view displaying file items as thumbnail icons in a responsive grid.
 ///
-/// Requirements: 2.1, 1.2
+/// Requirements: 2.1, 1.2, 4.2, 4.3, 4.4
 struct IconGridView: View {
     var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
+    var onAliasEdit: ((FileItem) -> Void)?
+    var onEditSortingRules: ((FileItem) -> Void)?
 
     private let columns = [
         GridItem(.adaptive(minimum: 100))
@@ -20,6 +22,8 @@ struct IconGridView: View {
                         isSelected: fileManagerVM.selectedItems.contains(item.id),
                         fileManagerVM: fileManagerVM,
                         tagManagerVM: tagManagerVM,
+                        onAliasEdit: onAliasEdit,
+                        onEditSortingRules: onEditSortingRules,
                         onSelect: { modifiers in
                             handleSelection(item: item, modifiers: modifiers)
                         },
@@ -67,6 +71,8 @@ struct IconGridItemView: View {
     let isSelected: Bool
     var fileManagerVM: FileManagerViewModel
     var tagManagerVM: TagManagerViewModel
+    var onAliasEdit: ((FileItem) -> Void)?
+    var onEditSortingRules: ((FileItem) -> Void)?
     let onSelect: (EventModifiers) -> Void
     let onDoubleClick: () -> Void
 
@@ -76,8 +82,9 @@ struct IconGridItemView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(item.isDirectory ? .blue : .gray)
 
-            Text(item.name)
+            Text(fileManagerVM.displayName(for: item))
                 .font(.caption)
+                .italic(fileManagerVM.isAliased(item))
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .multilineTextAlignment(.center)
@@ -101,9 +108,16 @@ struct IconGridItemView: View {
                 onSelect(.command)
             }
         )
-        .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM)
+        .overlay {
+            if item.isDirectory, let count = fileManagerVM.unsortedCounts[item.url.path], count > 0 {
+                SortStatusBadge(count: count) {
+                    fileManagerVM.toggleUnsortedFilter(for: item.url)
+                }
+            }
+        }
+        .tagContextMenu(item: item, fileManagerVM: fileManagerVM, tagManagerVM: tagManagerVM, onAliasEdit: onAliasEdit, onEditSortingRules: onEditSortingRules)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(item.name)
+        .accessibilityLabel(fileManagerVM.displayName(for: item))
         .accessibilityHint(item.isDirectory ? "Folder. Double-tap to open." : "File.")
     }
 }
