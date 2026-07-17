@@ -10,6 +10,11 @@ let package = Package(
         .executableTarget(
             name: "RetroFilesystemGUI",
             path: "Sources/RetroFilesystemGUI"
+        ),
+        .testTarget(
+            name: "RetroFilesystemGUITests",
+            dependencies: ["RetroFilesystemGUI"],
+            path: "Tests/RetroFilesystemGUITests"
         )
     ]
 )
