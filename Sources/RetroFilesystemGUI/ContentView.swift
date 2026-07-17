@@ -14,6 +14,12 @@ struct ContentView: View {
         storageService: TagStorageService()
     )
 
+    @State private var mediaPreviewVM = MediaPreviewViewModel(
+        mediaTypeDetector: MediaTypeDetector(),
+        thumbnailGenerator: ThumbnailGenerator(),
+        playerController: VideoPlayerController()
+    )
+
     /// Tracks the currently selected item for the metadata panel.
     @State private var currentMetadataItem: FileItem?
 
@@ -52,15 +58,20 @@ struct ContentView: View {
                 }
                 VStack(spacing: 0) {
                     PathBar(viewModel: fileManagerVM)
-                    FileBrowser(
-                        fileManagerVM: fileManagerVM,
-                        tagManagerVM: tagManagerVM,
-                        isTagFilterActive: !fileManagerVM.selectedTagIds.isEmpty
-                    )
+                    HSplitView {
+                        FileBrowser(
+                            fileManagerVM: fileManagerVM,
+                            tagManagerVM: tagManagerVM,
+                            isTagFilterActive: !fileManagerVM.selectedTagIds.isEmpty
+                        )
+                        MediaPreviewView(viewModel: mediaPreviewVM)
+                            .frame(minWidth: 200)
+                    }
                 }
             }
             .onChange(of: fileManagerVM.selectedItems) { _, newSelection in
                 handleSelectionChange(newSelection: newSelection)
+                handleMediaPreviewSelection(newSelection: newSelection)
             }
             .alert(
                 "Unsaved Changes",
@@ -243,6 +254,20 @@ struct ContentView: View {
             lastLoadedMetadata = fileManagerVM.selectedItemMetadata
         }
         pendingMetadataItem = nil
+    }
+
+    // MARK: - Media Preview Selection
+
+    /// Wires file selection to the media preview view model.
+    /// Only previews single-file selections; clears the preview for multi-select or empty selection.
+    private func handleMediaPreviewSelection(newSelection: Set<UUID>) {
+        if newSelection.count == 1,
+           let fileItem = fileManagerVM.fileItems.first(where: { newSelection.contains($0.id) }),
+           !fileItem.isDirectory {
+            mediaPreviewVM.selectFile(fileItem)
+        } else {
+            mediaPreviewVM.selectFile(nil)
+        }
     }
 
     // MARK: - Directory Comparison
