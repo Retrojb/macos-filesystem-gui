@@ -3,6 +3,7 @@
 import Testing
 import Foundation
 import AppKit
+import AVFoundation
 @testable import RetroFilesystemGUI
 
 /// **Validates: Requirements 4.2, 4.3**
@@ -12,6 +13,7 @@ import AppKit
 /// calling `toggleMute()` shall invert the current `isMuted` value: if `isMuted`
 /// was `true`, it becomes `false`, and vice versa.
 @Suite("MediaPreviewMuteToggle Tests")
+@MainActor
 struct MediaPreviewMuteToggleTests {
 
     // MARK: - Mock Implementations
@@ -35,6 +37,7 @@ struct MediaPreviewMuteToggleTests {
         var isPlaying: Bool = false
         var isMuted: Bool = true
         var hasAudioTrack: Bool = true
+        var avPlayer: AVPlayer? { nil }
         var onPlaybackEnded: (() -> Void)?
 
         func load(url: URL) async throws {

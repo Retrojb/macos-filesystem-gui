@@ -3,6 +3,7 @@
 import Testing
 import Foundation
 import AppKit
+import AVFoundation
 @testable import RetroFilesystemGUI
 
 /// **Validates: Requirements 2.2**
@@ -12,6 +13,7 @@ import AppKit
 /// or `.loadingThumbnail` and shall NOT transition to `.playing` without an explicit
 /// user `playVideo()` call.
 @Suite("MediaPreviewVideoAutoPlay Tests")
+@MainActor
 struct MediaPreviewVideoAutoPlayTests {
 
     // MARK: - Mock Implementations
@@ -36,6 +38,7 @@ struct MediaPreviewVideoAutoPlayTests {
         var isPlaying: Bool = false
         var isMuted: Bool = true
         var hasAudioTrack: Bool = true
+        var avPlayer: AVPlayer? { nil }
         var onPlaybackEnded: (() -> Void)?
 
         func load(url: URL) async throws {

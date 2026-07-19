@@ -25,16 +25,20 @@ struct MediaPreviewView: View {
                 thumbnailView(image: image)
 
             case .playing:
-                playingView
+                videoPlaybackView(showPauseButton: true)
 
             case .paused:
-                pausedView
+                videoPlaybackView(showPauseButton: false)
 
             case .error(let message):
                 errorView(message: message)
+
+            case .text(let content):
+                textView(content: content)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor))
         .onDisappear {
             viewModel.stopAndCleanup()
         }
@@ -43,7 +47,14 @@ struct MediaPreviewView: View {
     // MARK: - Subviews
 
     private var emptyView: some View {
-        Color.clear
+        VStack(spacing: 8) {
+            Image(systemName: "photo.on.rectangle")
+                .font(.system(size: 36))
+                .foregroundStyle(.tertiary)
+            Text("Select a file to preview")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private var loadingView: some View {
@@ -55,6 +66,7 @@ struct MediaPreviewView: View {
         Image(nsImage: image)
             .resizable()
             .aspectRatio(contentMode: .fit)
+            .padding(8)
     }
 
     private func thumbnailView(image: NSImage) -> some View {
@@ -62,6 +74,7 @@ struct MediaPreviewView: View {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
+                .padding(8)
 
             Button(action: { viewModel.playVideo() }) {
                 Image(systemName: "play.circle.fill")
@@ -73,19 +86,15 @@ struct MediaPreviewView: View {
         }
     }
 
-    private var playingView: some View {
+    private func videoPlaybackView(showPauseButton: Bool) -> some View {
         ZStack {
-            Color.black
+            if let player = viewModel.avPlayer {
+                VideoPlayerRepresentable(player: player)
+            } else {
+                Color.black
+            }
 
-            playbackControlsOverlay(isPlaying: true)
-        }
-    }
-
-    private var pausedView: some View {
-        ZStack {
-            Color.black
-
-            playbackControlsOverlay(isPlaying: false)
+            playbackControlsOverlay(isPlaying: showPauseButton)
         }
     }
 
@@ -131,6 +140,37 @@ struct MediaPreviewView: View {
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func textView(content: String) -> some View {
+        ScrollView {
+            Text(content)
+                .font(.system(.caption, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+// MARK: - AVPlayerView NSViewRepresentable Wrapper
+
+/// Wraps `AVPlayerView` for use in SwiftUI, rendering video content from an `AVPlayer`.
+struct VideoPlayerRepresentable: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let playerView = AVPlayerView()
+        playerView.player = player
+        playerView.controlsStyle = .none
+        playerView.showsFullScreenToggleButton = false
+        return playerView
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        if nsView.player !== player {
+            nsView.player = player
         }
     }
 }

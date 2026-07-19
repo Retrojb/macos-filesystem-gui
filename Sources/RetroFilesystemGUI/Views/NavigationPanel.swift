@@ -8,6 +8,8 @@ struct NavigationPanel: View {
 
     @State private var smartFolders: [SmartFolder] = []
     @State private var highlightedTagId: UUID?
+    @State private var expandedFavorites: Set<URL> = []
+    @State private var childDirectories: [URL: [URL]] = [:]
     private let smartFolderService: SmartFolderStorageServiceProtocol = SmartFolderStorageService()
 
     var body: some View {
@@ -26,27 +28,102 @@ struct NavigationPanel: View {
 
     private var favoritesSection: some View {
         Section("Favorites") {
-            NavigationLink(value: desktopURL) {
-                Label("Desktop", systemImage: "menubar.dock.rectangle")
-            }
-            .onTapGesture { navigateTo(desktopURL) }
+            collapsibleFavoriteItem(
+                url: desktopURL,
+                label: "Desktop",
+                icon: "menubar.dock.rectangle"
+            )
 
-            NavigationLink(value: documentsURL) {
-                Label("Documents", systemImage: "doc.fill")
-            }
-            .onTapGesture { navigateTo(documentsURL) }
+            collapsibleFavoriteItem(
+                url: documentsURL,
+                label: "Documents",
+                icon: "doc.fill"
+            )
 
-            NavigationLink(value: downloadsURL) {
-                Label("Downloads", systemImage: "arrow.down.circle.fill")
-            }
-            .onTapGesture { navigateTo(downloadsURL) }
+            collapsibleFavoriteItem(
+                url: downloadsURL,
+                label: "Downloads",
+                icon: "arrow.down.circle.fill"
+            )
 
             ForEach(mountedVolumes, id: \.self) { volume in
-                NavigationLink(value: volume) {
-                    Label(volume.lastPathComponent, systemImage: "externaldrive.fill")
-                }
-                .onTapGesture { navigateTo(volume) }
+                collapsibleFavoriteItem(
+                    url: volume,
+                    label: volume.lastPathComponent,
+                    icon: "externaldrive.fill"
+                )
             }
+        }
+    }
+
+    /// A favorite item with a disclosure triangle to show/hide child directories.
+    @ViewBuilder
+    private func collapsibleFavoriteItem(url: URL, label: String, icon: String) -> some View {
+        let isExpanded = expandedFavorites.contains(url)
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                // Disclosure triangle
+                Button(action: { toggleExpansion(for: url) }) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(.plain)
+
+                Label(label, systemImage: icon)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                navigateTo(url)
+            }
+
+            if isExpanded, let children = childDirectories[url] {
+                ForEach(children, id: \.self) { childURL in
+                    HStack(spacing: 4) {
+                        Spacer().frame(width: 16)
+                        Label(childURL.lastPathComponent, systemImage: "folder")
+                            .font(.callout)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        navigateTo(childURL)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    /// Toggles expansion state for a favorite and loads child directories if needed.
+    private func toggleExpansion(for url: URL) {
+        if expandedFavorites.contains(url) {
+            expandedFavorites.remove(url)
+        } else {
+            expandedFavorites.insert(url)
+            loadChildDirectories(for: url)
+        }
+    }
+
+    /// Loads immediate child directories for the given URL.
+    private func loadChildDirectories(for url: URL) {
+        guard childDirectories[url] == nil else { return }
+
+        let fileManager = FileManager.default
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            let directories = contents.filter { childURL in
+                let resourceValues = try? childURL.resourceValues(forKeys: [.isDirectoryKey])
+                return resourceValues?.isDirectory == true
+            }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            childDirectories[url] = directories
+        } catch {
+            childDirectories[url] = []
         }
     }
 

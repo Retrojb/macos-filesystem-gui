@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// Protocol for managing video playback lifecycle and state.
@@ -13,6 +14,10 @@ protocol VideoPlayerControlling: AnyObject {
 
     /// Whether the loaded video contains at least one audio track.
     var hasAudioTrack: Bool { get }
+
+    /// The underlying AVPlayer instance for use by the video playback view.
+    /// Returns nil when no video is loaded.
+    var avPlayer: AVPlayer? { get }
 
     /// A closure invoked when playback reaches the end of the video content.
     var onPlaybackEnded: (() -> Void)? { get set }

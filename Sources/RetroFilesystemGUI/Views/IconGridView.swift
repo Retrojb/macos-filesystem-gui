@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Icon grid view displaying file items as thumbnail icons in a responsive grid.
@@ -58,8 +59,9 @@ struct IconGridView: View {
     private func handleDoubleClick(item: FileItem) {
         if item.isDirectory {
             fileManagerVM.navigateTo(item.url)
+        } else {
+            NSWorkspace.shared.open(item.url)
         }
-        // Double-clicking a file is a no-op for now
     }
 }
 

@@ -3,6 +3,7 @@
 import Testing
 import Foundation
 import AppKit
+import AVFoundation
 @testable import RetroFilesystemGUI
 
 /// **Validates: Requirements 3.1, 4.4**
@@ -11,6 +12,7 @@ import AppKit
 /// any number of video files, each invocation of `playVideo()` shall set `isMuted` to `true`,
 /// regardless of the mute state from any prior playback session.
 @Suite("MediaPreviewMuteState Tests")
+@MainActor
 struct MediaPreviewMuteStateTests {
 
     // MARK: - Mock Implementations
@@ -45,6 +47,7 @@ struct MediaPreviewMuteStateTests {
             }
         }
         var hasAudioTrack: Bool = true
+        var avPlayer: AVPlayer? { nil }
         var onPlaybackEnded: (() -> Void)?
 
         /// Records the muted state at each change for verification.

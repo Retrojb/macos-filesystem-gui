@@ -9,11 +9,14 @@ import Foundation
 class VideoPlayerController: VideoPlayerControlling {
     // MARK: - Private Properties
 
-    private var player: AVPlayer?
+    private(set) var player: AVPlayer?
     private var playerItem: AVPlayerItem?
     private var endObserver: Any?
 
     // MARK: - VideoPlayerControlling
+
+    /// The underlying AVPlayer instance for use by the video playback view.
+    var avPlayer: AVPlayer? { player }
 
     /// Whether the video is currently playing.
     private(set) var isPlaying: Bool = false

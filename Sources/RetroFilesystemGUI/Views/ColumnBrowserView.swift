@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Column browser view displaying directories as horizontally-scrollable columns.
@@ -180,6 +181,8 @@ struct ColumnBrowserView: View {
     private func handleDoubleClick(item: FileItem) {
         if item.isDirectory {
             fileManagerVM.navigateTo(item.url)
+        } else {
+            NSWorkspace.shared.open(item.url)
         }
     }
 

@@ -3,6 +3,7 @@
 import Testing
 import Foundation
 import AppKit
+import AVFoundation
 @testable import RetroFilesystemGUI
 
 /// **Validates: Requirements 1.4, 2.5, 3.5, 5.5**
@@ -12,6 +13,7 @@ import AppKit
 /// file shall stop playback (state is no longer `.playing` or `.paused`), release the
 /// player controller, and display only the newly selected file's preview.
 @Suite("MediaPreviewSelectionChange Tests")
+@MainActor
 struct MediaPreviewSelectionChangeTests {
 
     // MARK: - Mock Implementations
@@ -38,6 +40,7 @@ struct MediaPreviewSelectionChangeTests {
         var isPlaying: Bool = false
         var isMuted: Bool = true
         var hasAudioTrack: Bool = true
+        var avPlayer: AVPlayer? { nil }
         var onPlaybackEnded: (() -> Void)?
 
         /// Tracks whether stop() was called since last reset.

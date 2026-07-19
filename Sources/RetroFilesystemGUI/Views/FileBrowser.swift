@@ -67,6 +67,10 @@ struct FileBrowser: View {
                 fileManagerVM.createNewFolder()
                 return .handled
             }
+            if keyPress.characters == "o" && keyPress.modifiers == .command {
+                openSelectedFiles()
+                return .handled
+            }
             return .ignored
         }
         .onKeyPress(.delete) {
@@ -237,6 +241,22 @@ struct FileBrowser: View {
         }
         return selectedFileItems.map { item in
             NSItemProvider(object: item.url as NSURL)
+        }
+    }
+
+    // MARK: - Open Files
+
+    /// Opens selected files with their default application, or navigates into directories.
+    private func openSelectedFiles() {
+        let selectedFileItems = fileManagerVM.fileItems.filter {
+            fileManagerVM.selectedItems.contains($0.id)
+        }
+        for item in selectedFileItems {
+            if item.isDirectory {
+                fileManagerVM.navigateTo(item.url)
+            } else {
+                NSWorkspace.shared.open(item.url)
+            }
         }
     }
 }

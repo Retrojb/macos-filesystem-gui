@@ -1,10 +1,13 @@
 import AppKit
+import AVFoundation
 import Foundation
+import UniformTypeIdentifiers
 
 /// ViewModel managing the media preview lifecycle and coordinating sub-components.
 ///
 /// Observes file selection and determines whether to display a photo, video thumbnail,
-/// or empty state. Manages async loading, cancellation, and resource cleanup.
+/// text content, or empty state. Manages async loading, cancellation, and resource cleanup.
+@MainActor
 @Observable
 class MediaPreviewViewModel {
 
@@ -19,6 +22,7 @@ class MediaPreviewViewModel {
         case thumbnail(NSImage)
         case playing
         case paused
+        case text(String)
         case error(String)
     }
 
@@ -36,6 +40,9 @@ class MediaPreviewViewModel {
     private let thumbnailGenerator: ThumbnailGenerating
     private let playerController: VideoPlayerControlling
 
+    /// The AVPlayer instance for use by the video playback view.
+    var avPlayer: AVPlayer? { playerController.avPlayer }
+
     // MARK: - Internal State
 
     /// The URL of the currently selected file, used for playback loading.
@@ -47,14 +54,21 @@ class MediaPreviewViewModel {
     /// The in-progress async load task, cancelled when a new file is selected.
     private var loadTask: Task<Void, Never>?
 
+    // MARK: - Text file extensions
+
+    /// File extensions treated as text files for preview purposes.
+    private static let textExtensions: Set<String> = [
+        "txt", "md", "markdown", "json", "xml", "html", "htm", "css", "js", "ts",
+        "swift", "py", "rb", "java", "c", "cpp", "h", "hpp", "m", "mm",
+        "sh", "bash", "zsh", "fish", "yml", "yaml", "toml", "ini", "cfg",
+        "log", "csv", "tsv", "sql", "r", "rs", "go", "kt", "scala",
+        "php", "pl", "lua", "vim", "el", "ex", "exs", "erl", "hs",
+        "dockerfile", "makefile", "cmake", "gradle", "plist", "strings",
+        "gitignore", "env", "conf"
+    ]
+
     // MARK: - Initialization
 
-    /// Creates a new MediaPreviewViewModel.
-    ///
-    /// - Parameters:
-    ///   - mediaTypeDetector: Service for classifying files by UTI conformance.
-    ///   - thumbnailGenerator: Service for generating video thumbnails.
-    ///   - playerController: Service for managing video playback.
     init(
         mediaTypeDetector: MediaTypeDetecting,
         thumbnailGenerator: ThumbnailGenerating,
@@ -68,11 +82,6 @@ class MediaPreviewViewModel {
     // MARK: - Actions
 
     /// Selects a file for preview, determining the appropriate display based on media type.
-    ///
-    /// Cancels any in-progress loading tasks and stops active playback before
-    /// transitioning to the new file's preview state.
-    ///
-    /// - Parameter fileItem: The file to preview, or nil to clear the preview.
     func selectFile(_ fileItem: FileItem?) {
         // Cancel any in-progress async work
         loadTask?.cancel()
@@ -90,35 +99,43 @@ class MediaPreviewViewModel {
             return
         }
 
-        let mediaType = mediaTypeDetector.classifyFile(at: fileItem.url)
+        let url = fileItem.url
+        let mediaType = mediaTypeDetector.classifyFile(at: url)
 
         switch mediaType {
         case .photo:
-            currentFileURL = fileItem.url
+            currentFileURL = url
             currentThumbnail = nil
             state = .loadingPhoto
-            loadTask = Task { [weak self] in
-                await self?.loadPhoto(from: fileItem.url)
+            loadTask = Task {
+                await loadPhoto(from: url)
             }
 
         case .video:
-            currentFileURL = fileItem.url
+            currentFileURL = url
             currentThumbnail = nil
             state = .loadingThumbnail
-            loadTask = Task { [weak self] in
-                await self?.loadThumbnail(from: fileItem.url)
+            loadTask = Task {
+                await loadThumbnail(from: url)
             }
 
         case .unsupported:
-            currentFileURL = nil
-            currentThumbnail = nil
-            state = .empty
+            // Check if it's a text file we can preview
+            if Self.isTextFile(url: url) {
+                currentFileURL = url
+                currentThumbnail = nil
+                loadTask = Task {
+                    await loadText(from: url)
+                }
+            } else {
+                currentFileURL = nil
+                currentThumbnail = nil
+                state = .empty
+            }
         }
     }
 
     /// Stops playback, cancels any in-progress tasks, and resets to the empty state.
-    ///
-    /// Call this when the preview panel is being dismissed or the view disappears.
     func stopAndCleanup() {
         loadTask?.cancel()
         loadTask = nil
@@ -129,10 +146,6 @@ class MediaPreviewViewModel {
     }
 
     /// Begins video playback for the currently selected video file.
-    ///
-    /// Each new playback session starts muted regardless of prior mute state.
-    /// Loads the video URL into the player controller and transitions to `.playing`.
-    /// If loading or playback fails, transitions to `.error`.
     func playVideo() {
         guard let url = currentFileURL, case .thumbnail = state else {
             return
@@ -141,29 +154,26 @@ class MediaPreviewViewModel {
         isMuted = true
         playerController.isMuted = true
 
-        // Wire end-of-playback callback before starting playback
         playerController.onPlaybackEnded = { [weak self] in
-            self?.handlePlaybackEnded()
+            Task { @MainActor in
+                self?.handlePlaybackEnded()
+            }
         }
 
-        loadTask = Task { [weak self] in
-            guard let self = self else { return }
+        loadTask = Task {
             do {
-                try await self.playerController.load(url: url)
+                try await playerController.load(url: url)
                 guard !Task.isCancelled else { return }
-                self.playerController.play()
-                self.state = .playing
+                playerController.play()
+                state = .playing
             } catch {
                 guard !Task.isCancelled else { return }
-                self.state = .error("Unable to play video")
+                state = .error("Unable to play video")
             }
         }
     }
 
     /// Pauses active video playback.
-    ///
-    /// Only takes effect if the current state is `.playing`.
-    /// Transitions state to `.paused`.
     func pauseVideo() {
         guard state == .playing else { return }
         playerController.pause()
@@ -171,9 +181,6 @@ class MediaPreviewViewModel {
     }
 
     /// Resumes video playback from the paused position.
-    ///
-    /// Preserves the current mute state — no changes to `isMuted`.
-    /// Transitions state from `.paused` back to `.playing`.
     func resumeVideo() {
         guard state == .paused else { return }
         playerController.play()
@@ -181,9 +188,6 @@ class MediaPreviewViewModel {
     }
 
     /// Toggles the mute state during video playback.
-    ///
-    /// Only works during `.playing` or `.paused` states.
-    /// If the video has no audio track, this is a no-op (stays muted).
     func toggleMute() {
         guard state == .playing || state == .paused else { return }
         guard playerController.hasAudioTrack else { return }
@@ -193,22 +197,13 @@ class MediaPreviewViewModel {
 
     // MARK: - Private Helpers
 
-    /// Handles end-of-playback by transitioning back to the thumbnail state.
-    ///
-    /// Uses the stored `currentThumbnail` if available, otherwise falls back
-    /// to the generic video icon.
     private func handlePlaybackEnded() {
         playerController.stop()
         let thumbnail = currentThumbnail ?? Self.genericVideoIcon
         state = .thumbnail(thumbnail)
     }
 
-    /// Loads a photo from the given URL asynchronously.
-    ///
-    /// Transitions to `.photo(image)` on success or `.error` on failure.
-    /// Respects task cancellation — if the task is cancelled before completion,
-    /// no state transition occurs.
-    @MainActor
+    /// Loads a photo from the given URL.
     private func loadPhoto(from url: URL) async {
         guard !Task.isCancelled else { return }
 
@@ -221,11 +216,7 @@ class MediaPreviewViewModel {
         }
     }
 
-    /// Generates a thumbnail for the video at the given URL asynchronously.
-    ///
-    /// Transitions to `.thumbnail(image)` on success. On timeout or other errors,
-    /// displays a generic video icon.
-    @MainActor
+    /// Generates a thumbnail for the video at the given URL.
     private func loadThumbnail(from url: URL) async {
         guard !Task.isCancelled else { return }
 
@@ -236,14 +227,65 @@ class MediaPreviewViewModel {
             state = .thumbnail(image)
         } catch {
             guard !Task.isCancelled else { return }
-            // On timeout or generation failure, use a generic video icon
             let genericIcon = Self.genericVideoIcon
             currentThumbnail = genericIcon
             state = .thumbnail(genericIcon)
         }
     }
 
-    /// A generic video file icon used when thumbnail generation fails or times out.
+    /// Loads text content from a file for preview.
+    private func loadText(from url: URL) async {
+        guard !Task.isCancelled else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            guard !Task.isCancelled else { return }
+
+            // Limit preview to first 10KB to avoid memory issues with huge files
+            let previewData = data.prefix(10_240)
+            if let content = String(data: previewData, encoding: .utf8) {
+                let displayText = data.count > 10_240
+                    ? content + "\n\n… (file truncated)"
+                    : content
+                state = .text(displayText)
+            } else {
+                // Binary data, not actually text
+                state = .empty
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            // File can't be read — treat as unsupported rather than showing an error
+            state = .empty
+        }
+    }
+
+    /// Determines if a URL points to a text-based file.
+    private static func isTextFile(url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+
+        // Check known text extensions
+        if textExtensions.contains(ext) {
+            return true
+        }
+
+        // Check if file has no extension but known text filename
+        let filename = url.lastPathComponent.lowercased()
+        let textFilenames: Set<String> = [
+            "makefile", "dockerfile", "rakefile", "gemfile", "podfile",
+            "license", "readme", "changelog", "authors", "contributing"
+        ]
+        if textFilenames.contains(filename) {
+            return true
+        }
+
+        // Use UTType to check if it conforms to plain text
+        if let utType = UTType(filenameExtension: ext) {
+            return utType.conforms(to: .plainText) || utType.conforms(to: .sourceCode)
+        }
+
+        return false
+    }
+
     private static var genericVideoIcon: NSImage {
         NSImage(systemSymbolName: "film", accessibilityDescription: "Video file") ?? NSImage()
     }
